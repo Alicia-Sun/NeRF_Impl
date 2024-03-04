@@ -71,45 +71,65 @@ def transform_ndc(o, d, W, H, f, near=1.0):
 # currently in camera space, so we must use the c2w matrix to 
 # transform to the world space.
 
-
-
-
-
-
-
-def sample_batch(camera_extrinsics, camera_intrinsics, images, batch_size, H, W, img_index=0, sample_all=False):
-    if sample_all:
-        image_indices = (torch.zeros(W * H) + img_index).type(torch.long)
+# Gets batches of rays from the given images
+# Args: batch_size = num images to get H/W = height and width in pixels, 
+# i = index specifying img we're working with, in/extrinsics = camera 
+# params, test = bool representing whether this method is called during 
+# testing or training.
+#
+#
+def batch(batch_size, H, W, i, intrinsics, extrinsics, test):
+    if test:
+        image_indices = (torch.zeros(W * H) + i).type(torch.long)
         u, v = np.meshgrid(np.linspace(0, W - 1, W, dtype=int), np.linspace(0, H - 1, H, dtype=int))
-        u = torch.from_numpy(u.reshape(-1)).to(camera_intrinsics.device)
-        v = torch.from_numpy(v.reshape(-1)).to(camera_intrinsics.device)
+        u = torch.from_numpy(u.reshape(-1)).to(intrinsics.device)
+        v = torch.from_numpy(v.reshape(-1)).to(intrinsics.device)
     else:
-        image_indices = (torch.zeros(batch_size) + img_index).type(torch.long)  # Sample random images
-        u = torch.randint(W, (batch_size,), device=camera_intrinsics.device)  # Sample random pixels (getting x and y)
-        v = torch.randint(H, (batch_size,), device=camera_intrinsics.device)
+        image_indices = (torch.zeros(batch_size) + i).type(torch.long)  # Sample random images
+        u = torch.randint(W, (batch_size,), device=intrinsics.device)  # Sample random pixels (getting x and y)
+        v = torch.randint(H, (batch_size,), device=intrinsics.device)
 
     # extract focal distance and translation/rotation vectors
-    focal = camera_intrinsics[0] ** 2 * W
-    t = camera_extrinsics[img_index, :3]
-    r = camera_extrinsics[img_index, -3:]
+    focal = intrinsics[0] ** 2 * W
+    t = extrinsics[i, :3]
+    r = extrinsics[i, -3:]
 
-    # Creating the 4x4 c2w matrix, Section 4.1 from the paper
-    phi_skew = torch.stack([torch.cat([torch.zeros(1, device=r.device), -r[2:3], r[1:2]]),
-                            torch.cat([r[2:3], torch.zeros(1, device=r.device), -r[0:1]]),
-                            torch.cat([-r[1:2], r[0:1], torch.zeros(1, device=r.device)])], dim=0)
-    alpha = r.norm() + 1e-15
-    R = torch.eye(3, device=r.device) + (torch.sin(alpha) / alpha) * phi_skew + (
-            (1 - torch.cos(alpha)) / alpha ** 2) * (phi_skew @ phi_skew)
-    c2w = torch.cat([R, t.unsqueeze(1)], dim=1)
-    c2w = torch.cat([c2w, torch.tensor([[0., 0., 0., 1.]], device=c2w.device)], dim=0)
+    # begin building 4x4 c2w matrix which is composed of a rotation matrix and a translation vector
+    phi_skewed = torch.tensor([[0.0, -r[2], r[1]],
+                               [r[2], 0.0, -r[0]],
+                               [-r[1], r[0], 0.0]])
+    
+    a = r.norm() + 1e-15
+
+    # following 4.1 in paper
+    rotation_matrix = torch.eye(3).to(device=t.device) + (torch.sin(a) / a) * (phi_skewed) + ((1-torch.cos(a)) / a ** 2) * (torch.matmul(phi_skewed, phi_skewed))
+
+    # make t vertical
+    t = torch.cat([t, torch.tensor([0.0]).to(device=t.device)])
+    t = torch.unsqueeze(t, 1)
+
+    c2w_matrix = torch.cat([rotation_matrix, torch.tensor([[0.0, 0.0, 0.0]]).to(device=t.device)], 0)
+    c2w_matrix = torch.cat([c2w_matrix, t], 1)
 
 
 
 
-    rays_d_cam = torch.cat([((u.to(camera_intrinsics.device) - .5 * W) / focal).unsqueeze(-1),
-                            (-(v.to(camera_intrinsics.device) - .5 * H) / focal).unsqueeze(-1),
+
+
+
+
+    rays_d_cam = torch.cat([((u.to(intrinsics.device) - .5 * W) / focal).unsqueeze(-1),
+                            (-(v.to(intrinsics.device) - .5 * H) / focal).unsqueeze(-1),
                             - torch.ones_like(u).unsqueeze(-1)], dim=-1)
-    rays_d_world = torch.matmul(c2w[:3, :3].view(1, 3, 3), rays_d_cam.unsqueeze(2)).squeeze(2)
-    rays_o_world = c2w[:3, 3].view(1, 3).expand_as(rays_d_world)
-    rays_o_world, rays_d_world = get_ndc_rays(H, W, focal, rays_o=rays_o_world, rays_d=rays_d_world)
+    rays_d_world = torch.matmul(c2w_matrix[:3, :3].view(1, 3, 3), rays_d_cam.unsqueeze(2)).squeeze(2)
+    rays_o_world = c2w_matrix[:3, 3].view(1, 3).expand_as(rays_d_world)
+    rays_o_world, rays_d_world = transform_ndc(H, W, focal, o=rays_o_world, d=rays_d_world)
     return rays_o_world, F.normalize(rays_d_world, p=2, dim=1), (image_indices, v.cpu(), u.cpu())
+
+
+
+
+
+
+
+
