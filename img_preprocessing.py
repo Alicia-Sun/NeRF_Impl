@@ -115,7 +115,7 @@ def batch(batch_size, H, W, i, intrinsics, extrinsics, test):
 
     # following 4.2 in paper
     d =  torch.cat([((u.to(intrinsics.device) - .5 * W) / f).unsqueeze(-1),
-                    (-(v.to(intrinsics.device) - .5 * H) / focal).unsqueeze(-1),
+                    (-(v.to(intrinsics.device) - .5 * H) / f).unsqueeze(-1),
                     -torch.ones_like(u).unsqueeze(-1)], dim=-1)
     d_world = torch.matmul(c2w_matrix[:3, :3].view(1, 3, 3), d.unsqueeze(2)).squeeze(2)
     o_world = c2w_matrix[:3, 3].view(1, 3).expand_as(rays_d_world)
