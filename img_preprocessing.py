@@ -114,13 +114,13 @@ def batch(batch_size, H, W, i, intrinsics, extrinsics, test):
 
 
     # following 4.2 in paper
-    d =  torch.cat([((u.to(intrinsics.device) - .5 * W) / f).unsqueeze(-1),
-                    (-(v.to(intrinsics.device) - .5 * H) / f).unsqueeze(-1),
-                    -torch.ones_like(u).unsqueeze(-1)], dim=-1)
+    d =  torch.cat([((u.to(intrinsics.device) - .5 * W) / f).unsqueeze(-1), # shift and normalize x coordinate
+                    (-(v.to(intrinsics.device) - .5 * H) / f).unsqueeze(-1), # shift and normalize y coordinate
+                    -torch.ones_like(u).unsqueeze(-1)], dim=-1) # adds a column of -1s to tensor
     d_world = torch.matmul(c2w_matrix[:3, :3].view(1, 3, 3), d.unsqueeze(2)).squeeze(2)
-    o_world = c2w_matrix[:3, 3].view(1, 3).expand_as(rays_d_world)
-    rays_o_world, rays_d_world = transform_ndc(H, W, f, o=o_world, d=rays_d_world)
-    return rays_o_world, F.normalize(rays_d_world, p=2, dim=1), (image_indices, v.cpu(), u.cpu())
+    o_world = c2w_matrix[:3, 3].view(1, 3).expand_as(d_world)
+    o_world, d_world = transform_ndc(H, W, f, o=o_world, d=d_world)
+    return o_world, F.normalize(d_world, p=2, dim=1), (image_indices, v.cpu(), u.cpu())
 
 
 
